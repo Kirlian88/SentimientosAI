@@ -100,5 +100,6 @@ def main():
             resultado = analizador.predecir(texto)
             print(resultado)
 
+
 if __name__ == "__main__":
     main()
