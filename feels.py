@@ -1,8 +1,10 @@
 import tkinter as tk
 from tkinter import messagebox
+from tkinter import ttk
 from PIL import Image, ImageTk
 import pyttsx3
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from langdetect import detect
 import torch
 import numpy as np
 import requests
@@ -16,64 +18,102 @@ class Sentimiento:
         self.nombre = nombre
         self.confianza = confianza
 
-# Analizador multiclase con modelo de Hugging Face
+# Analizador de sentimientos multilenguaje
 class AnalizadorSentimientos:
     def __init__(self):
-        modelo = 'cardiffnlp/twitter-roberta-base-sentiment'
-        self.tokenizer = AutoTokenizer.from_pretrained(modelo)
-        self.model = AutoModelForSequenceClassification.from_pretrained(modelo)
-        self.labels = self._cargar_etiquetas(modelo)
+        self.modelos = {
+            'en': {
+                'modelo': 'cardiffnlp/twitter-roberta-base-sentiment',
+                'labels': {0: "Negativo", 1: "Neutral", 2: "Positivo"}
+            },
+            'es': {
+                'modelo': 'finiteautomata/beto-sentiment-analysis',
+                'labels': {0: "Negativo", 1: "Neutral", 2: "Positivo"}
+            }
+        }
+        self.tokenizers = {}
+        self.models = {}
 
-    def _cargar_etiquetas(self, modelo):
-        url = f"https://raw.githubusercontent.com/cardiffnlp/tweeteval/main/datasets/sentiment/mapping.txt"
+        for lang, info in self.modelos.items():
+            self.tokenizers[lang] = AutoTokenizer.from_pretrained(info['modelo'])
+            self.models[lang] = AutoModelForSequenceClassification.from_pretrained(info['modelo'])
+
+    def detectar_idioma(self, texto):
         try:
-            response = requests.get(url)
-            return {i: line.strip().capitalize() for i, line in enumerate(response.text.splitlines())}
+            idioma = detect(texto)
+            return 'es' if idioma.startswith('es') else 'en'
         except:
-            return {0: "Negativo", 1: "Neutral", 2: "Positivo"}
+            return 'en'
 
     def predecir(self, texto):
-        inputs = self.tokenizer(texto, return_tensors="pt")
+        idioma = self.detectar_idioma(texto)
+        tokenizer = self.tokenizers[idioma]
+        model = self.models[idioma]
+        labels = self.modelos[idioma]['labels']
+
+        inputs = tokenizer(texto, return_tensors="pt", truncation=True)
         with torch.no_grad():
-            outputs = self.model(**inputs)
+            outputs = model(**inputs)
             scores = torch.nn.functional.softmax(outputs.logits, dim=1)[0].numpy()
         idx_max = np.argmax(scores)
-        return Sentimiento(self.labels[idx_max], float(scores[idx_max]))
+        return Sentimiento(labels[idx_max], float(scores[idx_max]))
 
 # Interfaz de Luna
 class LunaApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Luna - Tu Asistente Emocional")
+        self.root.title("🌙 Luna - Tu Asistente Emocional")
+        self.root.configure(bg="#f8f9fa")
+
         self.analizador = AnalizadorSentimientos()
 
         self.engine = pyttsx3.init()
         self.engine.setProperty('rate', 180)
         self.engine.setProperty('voice', self._voz_espanol())
 
+        self._estilizar()
         self._crear_interfaz()
 
     def _voz_espanol(self):
         for voice in self.engine.getProperty('voices'):
-            if "spanish" in voice.name.lower():
+            if "spanish" in voice.name.lower() or "es" in voice.id.lower():
                 return voice.id
         return self.engine.getProperty('voice')
 
+    def _estilizar(self):
+        style = ttk.Style()
+        style.theme_use("clam")
+
+        style.configure("TButton",
+                        font=("Segoe UI", 11, "bold"),
+                        foreground="white",
+                        background="#007bff",
+                        padding=10)
+        style.map("TButton",
+                  background=[("active", "#0056b3")])
+
     def _crear_interfaz(self):
+        # Avatar
         self.avatar_neutral = ImageTk.PhotoImage(Image.open("luna.png").resize((180, 180)))
         self.avatar_hablando = ImageTk.PhotoImage(Image.open("luna_habla.png").resize((180, 180)))
-        self.avatar_label = tk.Label(self.root, image=self.avatar_neutral)
+        self.avatar_label = tk.Label(self.root, image=self.avatar_neutral, bg="#f8f9fa")
         self.avatar_label.pack(pady=10)
 
-        self.entry = tk.Entry(self.root, width=50, font=("Arial", 12))
+        # Entrada de texto
+        self.entry = tk.Entry(self.root, width=50, font=("Segoe UI", 12))
         self.entry.pack(pady=10)
-        self.entry.insert(0, "¿Cómo te sientes hoy?")
+        self.entry.insert(0, "¿Cómo te sientes hoy? / How do you feel today?")
 
-        tk.Button(self.root, text="Analizar emoción", command=self.analizar_sentimiento).pack(pady=5)
-        tk.Button(self.root, text="Motívame", command=self.motivar).pack(pady=5)
+        # Botones con ttk
+        frame_botones = tk.Frame(self.root, bg="#f8f9fa")
+        frame_botones.pack(pady=5)
 
-        self.resultado_label = tk.Label(self.root, text="", font=("Arial", 12), wraplength=400)
-        self.resultado_label.pack(pady=10)
+        ttk.Button(frame_botones, text="Analizar emoción", command=self.analizar_sentimiento).grid(row=0, column=0, padx=10)
+        ttk.Button(frame_botones, text="Motívame", command=self.motivar).grid(row=0, column=1, padx=10)
+
+        # Resultado
+        self.resultado_label = tk.Label(self.root, text="", font=("Segoe UI", 11), wraplength=450, bg="#f8f9fa", justify="center")
+        self.resultado_label.pack(pady=15)
 
     def hablar(self, mensaje):
         stop_animacion = threading.Event()
@@ -81,7 +121,7 @@ class LunaApp:
         def hablar_con_animacion():
             self.engine.say(mensaje)
             self.engine.runAndWait()
-            stop_animacion.set()  # Señal para detener animación
+            stop_animacion.set()
 
         def animar_boca():
             time.sleep(0.2)
@@ -120,7 +160,7 @@ class LunaApp:
         self.resultado_label.config(text=mensaje)
         self.hablar(mensaje)
 
-# Ejecutar la aplicación
+# Ejecutar app
 if __name__ == "__main__":
     root = tk.Tk()
     app = LunaApp(root)
